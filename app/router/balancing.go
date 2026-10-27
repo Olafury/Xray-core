@@ -83,10 +83,12 @@ func (s *RoundRobinStrategy) PickOutbound(tags []string) string {
 }
 
 type Balancer struct {
-	selectors   []string
-	strategy    BalancingStrategy
-	ohm         outbound.Manager
-	fallbackTag string
+	tag          string
+	strategyName string
+	selectors    []string
+	strategy     BalancingStrategy
+	ohm          outbound.Manager
+	fallbackTag  string
 
 	override override
 }
@@ -96,29 +98,32 @@ func (b *Balancer) PickOutbound() (string, error) {
 	candidates, err := b.SelectOutbounds()
 	if err != nil {
 		if b.fallbackTag != "" {
-			errors.LogInfo(context.Background(), "fallback to [", b.fallbackTag, "], due to error: ", err)
+			errors.LogInfo(context.Background(), "balancer [", b.tag, "]: fallback to [", b.fallbackTag, "], due to error: ", err)
 			return b.fallbackTag, nil
 		}
 		return "", err
 	}
-	var tag string
+	var tag, source string
 	if o := b.override.Get(); o != "" {
-		tag = o
+		tag, source = o, "override set via API, strategy skipped"
 	} else {
-		tag = b.strategy.PickOutbound(candidates)
+		tag, source = b.strategy.PickOutbound(candidates), b.strategyName
 	}
 	if tag == "" {
 		if b.fallbackTag != "" {
-			errors.LogInfo(context.Background(), "fallback to [", b.fallbackTag, "], due to empty tag returned")
+			errors.LogInfo(context.Background(), "balancer [", b.tag, "]: ", b.strategyName, " selected no outbound, fallback to [", b.fallbackTag, "]")
 			return b.fallbackTag, nil
 		}
 		// will use default handler
-		return "", errors.New("balancing strategy returns empty tag")
+		return "", errors.New("balancer [", b.tag, "]: ", b.strategyName, " selected no outbound and no fallbackTag is set")
 	}
+	errors.LogDebug(context.Background(), "balancer [", b.tag, "]: picked [", tag, "] (", source, ")")
 	return tag, nil
 }
 
 func (b *Balancer) InjectContext(ctx context.Context) {
+	errors.LogDebug(ctx, "balancer [", b.tag, "]: strategy ", b.strategyName, ", selector ", b.selectors,
+		" (outbound tags starting with any of them), fallbackTag [", b.fallbackTag, "]")
 	if contextReceiver, ok := b.strategy.(extension.ContextReceiver); ok {
 		contextReceiver.InjectContext(ctx)
 	}
